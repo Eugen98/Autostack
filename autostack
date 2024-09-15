@@ -1,0 +1,99 @@
+#include "HX711.h"
+#include <WiFi.h>
+#include <ESP_Mail_Client.h>
+#define DT A0
+#define SCK A1
+HX711 scale; //Weight sensor name
+#define WIFI_SSID ""
+#define WIFI_PASSWORD ""
+#define SMTP_server "smtp.gmail.com"
+#define SMTP_Port 465
+#define sender_email " "
+#define sender_password ""
+#define Recipient_email ""
+#define Recipient_name ""
+SMTPSession smtp;
+float calibration_factor = -3.7; // Weight sensor coefficient
+float units;
+float weight_threshold_4_5kg = 4500; // 4.5 kg point
+float weight_threshold_5kg = 5000; // 5 kg point
+bool email_sent_4_5kg = false;
+bool email_sent_5kg = false;
+void setup() {
+  Serial.begin(115200);
+  Serial.println();
+  Serial.print("Connecting...");
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  while (WiFi.status() != WL_CONNECTED) {
+    Serial.print(".");
+    delay(200);
+  }
+  Serial.println("");
+  Serial.println("WiFi connected.");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+  Serial.println();
+  // Inizialization of HX711
+  scale.begin(DT, SCK);
+  scale.set_scale();
+  scale.tare();  // Сброс весов до 0
+  long zero_factor = scale.read_average(); // 
+  Serial.print("Zero factor: "); // 
+  Serial.println(zero_factor);
+}
+void loop() {
+  scale.set_scale(calibration_factor); 
+  if (scale.is_ready()) {
+    units = scale.get_units(10);
+    if (units < 0) {
+      units = 0.00;
+    }
+    Serial.print("Weight: ");
+    Serial.print(units);
+    Serial.println(" grams");
+    // Cheking the weight and sending email
+    if (units >= weight_threshold_4_5kg && !email_sent_4_5kg) {
+      Serial.println("Weight threshold 4.5kg reached, sending email...");
+      sendEmail("Dear Autostack user, the maximum load of the device will be achieved in next 5 minutes, please pick up the paper from the collecting box!");
+      email_sent_4_5kg = true;
+    } 
+    if (units >= weight_threshold_5kg && !email_sent_5kg) {
+      Serial.println("Weight threshold 5kg reached, sending email...");
+      sendEmail("Dear Autostack user, the maximum load achieved, please pick up the paper from the collecting box!");
+      email_sent_5kg = true;
+    }
+  } else {
+    Serial.println("HX711 not found.");
+    delay(1000);
+  }
+  delay(3000);
+}
+void sendEmail(const char* messageContent) {
+  smtp.debug(1);
+  ESP_Mail_Session session;
+  session.server.host_name = SMTP_server;
+  session.server.port = SMTP_Port;
+  session.login.email = sender_email;
+  session.login.password = sender_password;
+  session.login.user_domain = "";
+
+  SMTP_Message message;
+  message.sender.name = "Autostack";
+  message.sender.email = sender_email;
+  message.subject = "Autostack notification";
+  message.addRecipient(Recipient_name, Recipient_email);
+  String htmlMsg = "<div style=\"color:#000000;\"><h1>" + String(messageContent) + "</h1><p>Mail Generated from Autostack</p></div>";
+  message.html.content = htmlMsg.c_str();
+  message.html.charSet = "us-ascii";
+  message.html.transfer_encoding = Content_Transfer_Encoding::enc_7bit;
+  if (!smtp.connect(&session)) {
+    Serial.println("Could not connect to mail server");
+    return;
+  }
+  if (!MailClient.sendMail(&smtp, &message)) {
+    Serial.println("Error sending Email, " + smtp.errorReason());
+  } else {
+    Serial.println("Email sent successfully");
+  }
+  smtp.closeSession();
+}
